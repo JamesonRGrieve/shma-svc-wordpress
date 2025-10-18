@@ -43,12 +43,24 @@ svc_wordpress_db_name: wordpress
 svc_wordpress_db_user: wordpress
 svc_wordpress_db_password: ""
 svc_wordpress_db_use_tls: true
+svc_wordpress_enable_multisite: false
+svc_wordpress_multisite:
+  subdomain_install: false
+  site_domain: "{{ svc_wordpress_ingress_hostname }}"
+  site_path: "/"
+  site_id: 1
+  blog_id: 1
 
 # Redis caching configuration. The role depends on svc-redis.
 svc_wordpress_redis_host: svc-redis
 svc_wordpress_redis_port: 6379
 svc_wordpress_redis_password: ""
 svc_wordpress_redis_use_tls: true
+svc_wordpress_redis_verify_peer: true
+svc_wordpress_redis_tls_secret: ""
+svc_wordpress_redis_tls_ca_key: ca.crt
+svc_wordpress_redis_tls_ca_mount_dir: /etc/redis/tls
+svc_wordpress_redis_tls_ca_mount_path: "{{ svc_wordpress_redis_tls_ca_mount_dir }}/{{ svc_wordpress_redis_tls_ca_key }}"
 svc_wordpress_enable_object_cache: true
 
 # WordPress tuning knobs.
@@ -67,13 +79,24 @@ svc_wordpress_auth_keys:
   SECURE_AUTH_SALT: ""
   LOGGED_IN_SALT: ""
   NONCE_SALT: ""
-svc_wordpress_extra_php_ini: ""
+svc_wordpress_extra_php_ini: |-
+  opcache.enable=1
+  opcache.memory_consumption=128
+  opcache.interned_strings_buffer=16
+  opcache.max_accelerated_files=10000
+  opcache.validate_timestamps=1
+  opcache.revalidate_freq=60
+  upload_max_filesize={{ svc_wordpress_max_upload_size }}
+  post_max_size={{ svc_wordpress_max_upload_size }}
+svc_wordpress_mu_plugins: {}
 
 # Persistent storage for uploads. The root filesystem is configured read-only so
 # the uploads volume must be writable.
 svc_wordpress_uploads_storage_class: ""
 svc_wordpress_uploads_size: 10Gi
 svc_wordpress_uploads_path: /var/www/html/wp-content/uploads
+svc_wordpress_object_storage_credentials_mount_path: /run/secrets/wp-object-storage
+svc_wordpress_salts_mount_path: /run/secrets/wp-salts
 
 # Service metadata.
 svc_wordpress_service_annotations: {}
@@ -90,22 +113,30 @@ svc_wordpress_tmpfs_paths:
   - /run
 
 # Health probe configuration.
-svc_wordpress_readiness_path: /wp-login.php
+svc_wordpress_readiness_path: /wp-admin/install.php
 svc_wordpress_readiness_port: 80
 svc_wordpress_readiness_initial_delay: 30
 svc_wordpress_readiness_interval: 30
-svc_wordpress_readiness_timeout: 5
+svc_wordpress_readiness_timeout: 10
 svc_wordpress_readiness_failure_threshold: 5
 svc_wordpress_readiness_success_threshold: 1
 
-svc_wordpress_liveness_command:
-  - /bin/sh
-  - -c
-  - php -m >/dev/null
+svc_wordpress_liveness_path: /wp-cron.php?doing_wp_cron=1
 svc_wordpress_liveness_initial_delay: 60
 svc_wordpress_liveness_interval: 60
-svc_wordpress_liveness_timeout: 5
+svc_wordpress_liveness_timeout: 10
 svc_wordpress_liveness_failure_threshold: 3
+
+svc_wordpress_startup_path: /wp-admin/install.php
+svc_wordpress_startup_initial_delay: 60
+svc_wordpress_startup_interval: 10
+svc_wordpress_startup_timeout: 10
+svc_wordpress_startup_failure_threshold: 12
+
+svc_wordpress_enable_cron_job: true
+svc_wordpress_cron_image: docker.io/curlimages/curl:8.6.0
+svc_wordpress_cron_schedule: "*/5 * * * *"
+svc_wordpress_cron_timeout_seconds: 120
 
 # Optional object storage integration. When enabled, provide credentials via
 # secrets and set the corresponding WordPress configuration snippet.
