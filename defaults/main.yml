@@ -4,8 +4,9 @@
 # Name used for the rendered LXC application definition and container.
 svc_wordpress_name: wordpress
 
-# Location where the rendered LXC definition should be written. The caller must
-# override this with a writable path that is collected by the control plane.
+# Location where the rendered runtime definition should be written. The caller
+# must override this with a writable path that is collected by the control
+# plane.
 svc_wordpress_lxc_config_path: ""
 # Optional path where the role writes the exports.env file. When left empty the
 # file is rendered alongside the LXC definition.
@@ -33,12 +34,33 @@ svc_wordpress_scheme: https
 svc_wordpress_url: "{{ svc_wordpress_scheme }}://{{ svc_wordpress_ingress_hostname }}"
 
 # Database connectivity. The role depends on svc-mariadb (or another compatible
-# service) to provide the actual database instance. When paired with the
-# svc-mariadb role, consume the exported hostname (for example,
-# ``svc_wordpress_db_host: "{{ lookup('env', 'MARIADB_HOST') }}"``) or wire the
-# value from the MariaDB service outputs.
-svc_wordpress_db_host: ""
-svc_wordpress_db_port: 3306
+# service) to provide the actual database instance. Dependency exports are the
+# primary data source; override these variables only for exceptional
+# deployments.
+svc_wordpress_db_host: >-
+  {{ dependency_exports.database.env.DATABASE_HOST
+     if (
+       dependency_exports is defined
+       and dependency_exports is mapping
+       and 'database' in dependency_exports
+       and dependency_exports.database is mapping
+       and dependency_exports.database.env is mapping
+       and 'DATABASE_HOST' in dependency_exports.database.env
+     )
+     else ''
+  }}
+svc_wordpress_db_port: >-
+  {{ dependency_exports.database.env.DATABASE_PORT
+     if (
+       dependency_exports is defined
+       and dependency_exports is mapping
+       and 'database' in dependency_exports
+       and dependency_exports.database is mapping
+       and dependency_exports.database.env is mapping
+       and 'DATABASE_PORT' in dependency_exports.database.env
+     )
+     else 3306
+  }}
 svc_wordpress_db_name: wordpress
 svc_wordpress_db_user: wordpress
 svc_wordpress_db_password: ""
@@ -51,10 +73,44 @@ svc_wordpress_multisite:
   site_id: 1
   blog_id: 1
 
-# Redis caching configuration. The role depends on svc-redis.
-svc_wordpress_redis_host: svc-redis
-svc_wordpress_redis_port: 6379
-svc_wordpress_redis_password: ""
+# Redis caching configuration. The role depends on svc-redis and prefers
+# exported connection details when available.
+svc_wordpress_redis_host: >-
+  {{ dependency_exports.redis.env.REDIS_HOST
+     if (
+       dependency_exports is defined
+       and dependency_exports is mapping
+       and 'redis' in dependency_exports
+       and dependency_exports.redis is mapping
+       and dependency_exports.redis.env is mapping
+       and 'REDIS_HOST' in dependency_exports.redis.env
+     )
+     else 'svc-redis'
+  }}
+svc_wordpress_redis_port: >-
+  {{ dependency_exports.redis.env.REDIS_PORT
+     if (
+       dependency_exports is defined
+       and dependency_exports is mapping
+       and 'redis' in dependency_exports
+       and dependency_exports.redis is mapping
+       and dependency_exports.redis.env is mapping
+       and 'REDIS_PORT' in dependency_exports.redis.env
+     )
+     else 6379
+  }}
+svc_wordpress_redis_password: >-
+  {{ dependency_exports.redis.env.REDIS_PASSWORD
+     if (
+       dependency_exports is defined
+       and dependency_exports is mapping
+       and 'redis' in dependency_exports
+       and dependency_exports.redis is mapping
+       and dependency_exports.redis.env is mapping
+       and 'REDIS_PASSWORD' in dependency_exports.redis.env
+     )
+     else ''
+  }}
 svc_wordpress_redis_use_tls: true
 svc_wordpress_redis_verify_peer: true
 svc_wordpress_redis_tls_secret: ""
@@ -95,11 +151,12 @@ svc_wordpress_mu_plugins: {}
 svc_wordpress_uploads_storage_class: ""
 svc_wordpress_uploads_size: 10Gi
 svc_wordpress_uploads_path: /var/www/html/wp-content/uploads
-svc_wordpress_object_storage_credentials_mount_path: /run/secrets/wp-object-storage
 svc_wordpress_salts_mount_path: /run/secrets/wp-salts
 
 # Service metadata.
-svc_wordpress_service_annotations: {}
+svc_wordpress_service_annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "80"
 
 # Security hardening options.
 svc_wordpress_user: 33   # www-data

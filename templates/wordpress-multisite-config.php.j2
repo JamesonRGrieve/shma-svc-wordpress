@@ -1,0 +1,22 @@
+<?php
+if (!defined('WP_ALLOW_MULTISITE')) {
+    define('WP_ALLOW_MULTISITE', true);
+}
+if (!defined('MULTISITE')) {
+    define('MULTISITE', true);
+}
+if (!defined('SUBDOMAIN_INSTALL')) {
+    define('SUBDOMAIN_INSTALL', {{ 'true' if svc_wordpress_multisite.subdomain_install else 'false' }});
+}
+if (!defined('DOMAIN_CURRENT_SITE')) {
+    define('DOMAIN_CURRENT_SITE', '{{ svc_wordpress_multisite.site_domain }}');
+}
+if (!defined('PATH_CURRENT_SITE')) {
+    define('PATH_CURRENT_SITE', '{{ svc_wordpress_multisite.site_path }}');
+}
+if (!defined('SITE_ID_CURRENT_SITE')) {
+    define('SITE_ID_CURRENT_SITE', {{ svc_wordpress_multisite.site_id }});
+}
+if (!defined('BLOG_ID_CURRENT_SITE')) {
+    define('BLOG_ID_CURRENT_SITE', {{ svc_wordpress_multisite.blog_id }});
+}

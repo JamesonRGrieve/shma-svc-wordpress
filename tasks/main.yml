@@ -39,6 +39,74 @@
       passed through unchanged.
   when: dependency_exports is defined
 
+- name: Derive dependency export helpers
+  ansible.builtin.set_fact:
+    _svc_wordpress_db_exports: >-
+      {{ dependency_exports.database.env
+         if (
+           dependency_exports is defined
+           and dependency_exports is mapping
+           and 'database' in dependency_exports
+           and dependency_exports.database is mapping
+           and dependency_exports.database.env is mapping
+         )
+         else {}
+      }}
+    _svc_wordpress_redis_exports: >-
+      {{ dependency_exports.redis.env
+         if (
+           dependency_exports is defined
+           and dependency_exports is mapping
+           and 'redis' in dependency_exports
+           and dependency_exports.redis is mapping
+           and dependency_exports.redis.env is mapping
+         )
+         else {}
+      }}
+
+- name: Derive connection configuration
+  ansible.builtin.set_fact:
+    _svc_wordpress_db_host: >-
+      {% if svc_wordpress_db_host | default('', true) | length %}
+      {{ svc_wordpress_db_host }}
+      {% elif 'DATABASE_HOST' in _svc_wordpress_db_exports %}
+      {{ _svc_wordpress_db_exports.DATABASE_HOST }}
+      {% else %}
+      ''
+      {% endif %}
+    _svc_wordpress_db_port: >-
+      {% if svc_wordpress_db_port | default('', true) | string | length %}
+      {{ svc_wordpress_db_port }}
+      {% elif 'DATABASE_PORT' in _svc_wordpress_db_exports %}
+      {{ _svc_wordpress_db_exports.DATABASE_PORT }}
+      {% else %}
+      ''
+      {% endif %}
+    _svc_wordpress_redis_host: >-
+      {% if svc_wordpress_redis_host | default('', true) | length %}
+      {{ svc_wordpress_redis_host }}
+      {% elif 'REDIS_HOST' in _svc_wordpress_redis_exports %}
+      {{ _svc_wordpress_redis_exports.REDIS_HOST }}
+      {% else %}
+      ''
+      {% endif %}
+    _svc_wordpress_redis_port: >-
+      {% if svc_wordpress_redis_port | default('', true) | string | length %}
+      {{ svc_wordpress_redis_port }}
+      {% elif 'REDIS_PORT' in _svc_wordpress_redis_exports %}
+      {{ _svc_wordpress_redis_exports.REDIS_PORT }}
+      {% else %}
+      ''
+      {% endif %}
+    _svc_wordpress_redis_password: >-
+      {% if svc_wordpress_redis_password | default('', true) | length %}
+      {{ svc_wordpress_redis_password }}
+      {% elif 'REDIS_PASSWORD' in _svc_wordpress_redis_exports %}
+      {{ _svc_wordpress_redis_exports.REDIS_PASSWORD }}
+      {% else %}
+      ''
+      {% endif %}
+
 - name: Ensure the exports env path is valid
   ansible.builtin.assert:
     that:
@@ -54,28 +122,20 @@
     that:
       - svc_wordpress_db_password is string
       - svc_wordpress_db_password | length > 0
+      - svc_wordpress_db_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{16,}$')
   fail_msg: >-
       The WordPress database password must be supplied via an Ansible vault or
-      secret.
+      secret. Passwords must be at least 16 characters and contain upper and
+      lower case letters, a digit, and a special character.
 
 - name: Ensure the database endpoint is discoverable
   ansible.builtin.assert:
     that:
-      - (
-          svc_wordpress_db_host is string
-          and svc_wordpress_db_host | length > 0
-          and svc_wordpress_db_port | string | length > 0
-        )
-        or (
-          DATABASE_HOST is defined
-          and DATABASE_HOST | length > 0
-          and DATABASE_PORT is defined
-          and DATABASE_PORT | string | length > 0
-        )
+      - _svc_wordpress_db_host | length > 0
+      - _svc_wordpress_db_port | string | length > 0
   fail_msg: >-
-      Provide svc_wordpress_db_host/svc_wordpress_db_port or ensure the
-      DATABASE_HOST/DATABASE_PORT exports from the database service are
-      available to this role.
+      Provide svc_wordpress_db_host/svc_wordpress_db_port or ensure the database
+      dependency exports include DATABASE_HOST and DATABASE_PORT.
 
 - name: Ensure the WordPress URL aligns with the ingress hostname
   ansible.builtin.assert:
@@ -90,8 +150,8 @@
 - name: Ensure Redis credentials are provided
   ansible.builtin.assert:
     that:
-      - svc_wordpress_redis_password is string
-      - svc_wordpress_redis_password | length > 0
+      - _svc_wordpress_redis_password is string
+      - _svc_wordpress_redis_password | length > 0
   fail_msg: >-
       The Redis cache password must be supplied via an Ansible vault or secret.
 
@@ -108,6 +168,15 @@
       exports.
   when: svc_wordpress_enable_object_storage | bool
 
+- name: Determine whether Redis TLS peer verification requires a CA
+  ansible.builtin.set_fact:
+    _svc_wordpress_redis_needs_ca: >-
+      {{
+        (svc_wordpress_enable_object_cache | bool)
+        and (svc_wordpress_redis_use_tls | bool)
+        and (svc_wordpress_redis_verify_peer | bool)
+      }}
+
 - name: Ensure Redis TLS materials are available when peer verification is enabled
   ansible.builtin.assert:
     that:
@@ -116,10 +185,7 @@
       Provide svc_wordpress_redis_tls_secret when TLS is enabled and peer
       verification is required so the CA certificate can be mounted in the
       workload.
-  when:
-    - svc_wordpress_enable_object_cache | bool
-    - svc_wordpress_redis_use_tls | bool
-    - svc_wordpress_redis_verify_peer | bool
+  when: _svc_wordpress_redis_needs_ca
 
 - name: Ensure WordPress authentication keys are provided
   ansible.builtin.assert:
@@ -147,6 +213,18 @@
       contents when defining must-use plugins.
   when: svc_wordpress_mu_plugins | length > 0
 
+- name: Validate must-use plugin contents when provided
+  ansible.builtin.assert:
+    that:
+      - item.value | length == 0 or ('<?php' in item.value)
+    fail_msg: >-
+      Must-use plugin "{{ item.key }}" must contain PHP code beginning with
+      "<?php" so WordPress can evaluate it safely.
+  loop: "{{ svc_wordpress_mu_plugins | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: svc_wordpress_mu_plugins | length > 0
+
 - name: Ensure multisite configuration is complete when enabled
   ansible.builtin.assert:
     that:
@@ -160,6 +238,27 @@
       When svc_wordpress_enable_multisite is true, provide the site domain, path,
       and numeric identifiers so WordPress can initialise the network.
   when: svc_wordpress_enable_multisite | bool
+
+- name: Validate extra PHP configuration when provided
+  ansible.builtin.command:
+    cmd: >-
+      python3 - <<'PY'
+      import configparser
+      import io
+      import sys
+
+      parser = configparser.ConfigParser()
+      parser.optionxform = str
+      data = "[php]\n" + """{{ svc_wordpress_extra_php_ini | trim }}"""
+
+      try:
+          parser.read_file(io.StringIO(data))
+      except configparser.Error as exc:
+          print(exc, file=sys.stderr)
+          sys.exit(1)
+      PY
+  changed_when: false
+  when: svc_wordpress_extra_php_ini | trim | length > 0
 
 - name: Render the LXC workload definition
   ansible.builtin.template:
@@ -180,7 +279,7 @@
     mode: "0640"
     content: |-
       APP_FQDN={{ svc_wordpress_ingress_hostname }}
-      APP_PORT={{ '443' if svc_wordpress_scheme == 'https' else '80' }}
+      APP_PORT=80
       BACKEND_IP={{ svc_wordpress_name }}
 
 - name: Validate the rendered exports env file
@@ -196,3 +295,36 @@
     fail_msg: >-
       The generated exports.env file is missing required keys. Inspect the
       rendered file at {{ _svc_wordpress_exports_env_path }} for syntax errors.
+
+- name: Parse exports env values
+  ansible.builtin.command:
+    cmd: >-
+      python3 - <<'PY'
+      import json
+
+      data = {}
+      for line in """{{ _svc_wordpress_exports_env_content }}""".splitlines():
+          if not line or line.startswith('#') or '=' not in line:
+              continue
+          key, value = line.split('=', 1)
+          data[key] = value
+      print(json.dumps(data))
+      PY
+  register: _svc_wordpress_exports_env_parsed
+  changed_when: false
+
+- name: Store parsed exports env values
+  ansible.builtin.set_fact:
+    _svc_wordpress_exports_env_map: "{{ _svc_wordpress_exports_env_parsed.stdout | from_json }}"
+
+- name: Validate exports env value formats
+  ansible.builtin.assert:
+    that:
+      - _svc_wordpress_exports_env_map.APP_PORT | int >= 1
+      - _svc_wordpress_exports_env_map.APP_PORT | int <= 65535
+      - _svc_wordpress_exports_env_map.APP_FQDN is match('^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+$')
+      - _svc_wordpress_exports_env_map.BACKEND_IP is match('^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+$')
+    fail_msg: >-
+      The exports.env file contains invalid data. Ensure APP_FQDN is a hostname,
+      APP_PORT is an integer between 1 and 65535, and BACKEND_IP resolves to the
+      rendered service name.
