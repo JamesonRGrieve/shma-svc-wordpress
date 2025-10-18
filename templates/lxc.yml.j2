@@ -146,6 +146,16 @@ spec:
               value: "{{ svc_wordpress_object_storage_bucket }}"
             - name: S3_UPLOADS_REGION
               value: "{{ svc_wordpress_object_storage_region }}"
+            - name: S3_UPLOADS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-object-storage
+                  key: access_key
+            - name: S3_UPLOADS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-object-storage
+                  key: secret_key
             {% endif %}
             {% for key, value in svc_wordpress_extra_environment.items() %}
             - name: {{ key }}
@@ -202,6 +212,17 @@ spec:
           emptyDir:
             medium: Memory
         {% endfor %}
+{% if svc_wordpress_enable_object_storage %}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ svc_wordpress_name }}-object-storage
+type: Opaque
+stringData:
+  access_key: "{{ svc_wordpress_object_storage_access_key }}"
+  secret_key: "{{ svc_wordpress_object_storage_secret_key }}"
+{% endif %}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

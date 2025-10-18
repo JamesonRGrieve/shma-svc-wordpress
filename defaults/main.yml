@@ -7,6 +7,9 @@ svc_wordpress_name: wordpress
 # Location where the rendered LXC definition should be written. The caller must
 # override this with a writable path that is collected by the control plane.
 svc_wordpress_lxc_config_path: ""
+# Optional path where the role writes the exports.env file. When left empty the
+# file is rendered alongside the LXC definition.
+svc_wordpress_exports_env_path: ""
 
 # OCI image details.
 svc_wordpress_image: >-
@@ -110,3 +113,5 @@ svc_wordpress_enable_object_storage: false
 svc_wordpress_object_storage_plugin: wp-s3
 svc_wordpress_object_storage_bucket: ""
 svc_wordpress_object_storage_region: ""
+svc_wordpress_object_storage_access_key: ""
+svc_wordpress_object_storage_secret_key: ""
