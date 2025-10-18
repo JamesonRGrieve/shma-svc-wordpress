@@ -22,9 +22,28 @@
     that:
       - svc_wordpress_db_password is string
       - svc_wordpress_db_password | length > 0
-    fail_msg: >-
+  fail_msg: >-
       The WordPress database password must be supplied via an Ansible vault or
       secret.
+
+- name: Ensure the database endpoint is discoverable
+  ansible.builtin.assert:
+    that:
+      - (
+          svc_wordpress_db_host is string
+          and svc_wordpress_db_host | length > 0
+          and svc_wordpress_db_port | string | length > 0
+        )
+        or (
+          DATABASE_HOST is defined
+          and DATABASE_HOST | length > 0
+          and DATABASE_PORT is defined
+          and DATABASE_PORT | string | length > 0
+        )
+  fail_msg: >-
+      Provide svc_wordpress_db_host/svc_wordpress_db_port or ensure the
+      DATABASE_HOST/DATABASE_PORT exports from the database service are
+      available to this role.
 
 - name: Ensure Redis credentials are provided
   ansible.builtin.assert:

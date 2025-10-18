@@ -9,7 +9,8 @@ svc_wordpress_name: wordpress
 svc_wordpress_lxc_config_path: ""
 
 # OCI image details.
-svc_wordpress_image: docker.io/library/wordpress:6.4.3-php8.2-apache
+svc_wordpress_image: >-
+  docker.io/library/wordpress:6.4.3-php8.2-apache@sha256:8ae66efb09a2cc4f1ce44414c52b0ce4198c1f8ed338a6f51910bc09cd7d8bbb
 svc_wordpress_image_pull_policy: if-not-present
 
 # Desired number of replicas/instances for the workload. Keep this at 1 unless
@@ -30,7 +31,7 @@ svc_wordpress_url: "{{ svc_wordpress_scheme }}://{{ svc_wordpress_ingress_hostna
 
 # Database connectivity. The role depends on svc-mariadb (or another compatible
 # service) to provide the actual database instance.
-svc_wordpress_db_host: svc-mariadb
+svc_wordpress_db_host: ""
 svc_wordpress_db_port: 3306
 svc_wordpress_db_name: wordpress
 svc_wordpress_db_user: wordpress
