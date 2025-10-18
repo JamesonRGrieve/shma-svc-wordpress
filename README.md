@@ -14,8 +14,9 @@ backing storage and plugins support concurrent writers.
   asserts that `svc_wordpress_url` references the same hostname to prevent
   redirect loops.
 * Supply database credentials (`svc_wordpress_db_*`) or dependency exports that
-  define `DATABASE_HOST` and `DATABASE_PORT`. The role validates the
-  `dependency_exports` schema before using the exported values.
+  define `DATABASE_HOST` and `DATABASE_PORT`. Dependency exports are preferred;
+  explicit overrides only apply in exceptional topologies. The role validates
+  the `dependency_exports` schema before using the exported values.
 * Set `svc_wordpress_lxc_config_path` (and optionally
   `svc_wordpress_exports_env_path`) so the rendered manifest and `exports.env`
   file can be collected by the control plane.
@@ -28,10 +29,12 @@ backing storage and plugins support concurrent writers.
 ### Authentication salts and rotation
 
 Authentication keys and salts are rendered into a dedicated secret that is
-mounted at `/run/secrets/wp-salts/wp-salts.php`. WordPress loads the file during
-bootstrap instead of relying on environment variables, keeping the values out of
-`kubectl describe` and container logs. Rotate the keys periodically by updating
-both the structured variables and the secret:
+mounted at `/run/secrets/wp-salts/wp-salts.php`. Only the PHP include file is
+stored in the secret to avoid duplicating data or drifting values between
+different keys. WordPress loads the file during bootstrap instead of relying on
+environment variables, keeping the values out of `kubectl describe` and
+container logs. Rotate the keys periodically by updating both the structured
+variables and the secret:
 
 ```sh
 kubectl create secret generic wordpress-auth --from-literal=AUTH_KEY=... --dry-run=client -o yaml | kubectl apply -f -
@@ -61,16 +64,27 @@ mechanisms.
 Use the `svc_wordpress_mu_plugins` mapping to ship must-use plugins. Each entry
 is rendered into a ConfigMap and mounted under
 `/var/www/html/wp-content/mu-plugins`, guaranteeing that hardening plugins (for
-example, cache bootstrap or security filters) load on every request.
+example, cache bootstrap or security filters) load on every request. The role
+validates that each file contains PHP code (or is empty) so syntax mistakes fail
+fast during deployment instead of breaking the container at runtime.
+
+### Service annotations
+
+`svc_wordpress_service_annotations` defaults to Prometheus discovery metadata so
+platform monitoring can scrape the rendered service. Override or extend the
+mapping to add service-mesh, load-balancer, or policy annotations as required by
+your environment.
 
 ## Database and caching
 
 ### Database connectivity
 
-The workload automatically prefers explicit `svc_wordpress_db_host` and
-`svc_wordpress_db_port` values, falling back to exported
-`DATABASE_HOST`/`DATABASE_PORT` when present. TLS can be enabled with
-`svc_wordpress_db_use_tls`.
+The workload automatically prefers dependency exports for database host and port
+information. Override `svc_wordpress_db_host` or `svc_wordpress_db_port` only
+when the consuming environment cannot surface the exports directly. TLS can be
+enabled with `svc_wordpress_db_use_tls`. Database passwords must meet a strong
+complexity requirement (16+ characters, upper/lower case, digit, special
+character); weak credentials fail validation before templates render.
 
 ### Redis object cache
 
@@ -115,10 +129,11 @@ throughput.
 ### Object storage and credentials
 
 Enable S3-compatible uploads by setting `svc_wordpress_enable_object_storage:
-true` and providing the bucket details and credentials. Secrets are mounted at
-`{{ svc_wordpress_object_storage_credentials_mount_path }}` so credentials do not
-leak into pod environment variables. Update `svc_wordpress_extra_wordpress_config`
-if the selected plugin requires additional constants.
+true` and providing the bucket details and credentials. Secrets surface through
+environment variables (`S3_UPLOADS_KEY`/`S3_UPLOADS_SECRET`) so the container no
+longer mounts writable credential files. Update
+`svc_wordpress_extra_wordpress_config` if the selected plugin requires
+additional constants.
 
 ### CDN integration and mixed content
 
@@ -145,8 +160,9 @@ remain aligned.
 
 Set `svc_wordpress_enable_multisite: true` and populate `svc_wordpress_multisite`
 with the network topology (domain, path, and numeric identifiers). The rendered
-manifest configures the required constants while keeping per-site domain routing
-under the ingress configuration.
+manifest drops a dedicated `wp-config.d/multisite.php` include that holds the
+network constants while keeping per-site domain routing under the ingress
+configuration.
 
 ## Background jobs and cron
 
@@ -159,13 +175,15 @@ queued tasks even when the site receives little foreground traffic.
 
 ## Health probes and reliability
 
-* **Readiness:** Executes a local `curl` against
+* **Readiness:** Performs an HTTP GET against
   `svc_wordpress_readiness_path` (default `/wp-admin/install.php`) so failed
-  database connections surface before traffic is routed.
+  database connections surface before traffic is routed without requiring curl
+  inside the container image.
 * **Startup:** Polls the admin installer endpoint with generous delays to avoid
   flapping during plugin activation or schema migrations.
-* **Liveness:** Hits `svc_wordpress_liveness_path` (default `wp-cron.php`) to
-  ensure PHP-FPM and Apache respond to HTTP requests.
+* **Liveness:** Uses the same HTTP-based probe against
+  `svc_wordpress_liveness_path` (default `wp-cron.php`) to ensure PHP-FPM and
+  Apache respond to HTTP requests.
 
 Increase probe timeouts via the corresponding variables for heavily loaded
 installations.
