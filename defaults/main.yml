@@ -55,6 +55,16 @@ svc_wordpress_wp_cli_auto_updates: false
 svc_wordpress_extra_environment: {}
 svc_wordpress_extra_wordpress_config: ""
 svc_wordpress_env_secret_name: ""
+svc_wordpress_auth_keys:
+  AUTH_KEY: ""
+  SECURE_AUTH_KEY: ""
+  LOGGED_IN_KEY: ""
+  NONCE_KEY: ""
+  AUTH_SALT: ""
+  SECURE_AUTH_SALT: ""
+  LOGGED_IN_SALT: ""
+  NONCE_SALT: ""
+svc_wordpress_extra_php_ini: ""
 
 # Persistent storage for uploads. The root filesystem is configured read-only so
 # the uploads volume must be writable.
