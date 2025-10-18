@@ -29,8 +29,10 @@ spec:
             capabilities:
               drop: {{ svc_wordpress_drop_capabilities }}
           env:
+            {% if svc_wordpress_db_host %}
             - name: WORDPRESS_DB_HOST
               value: "{{ svc_wordpress_db_host }}:{{ svc_wordpress_db_port }}"
+            {% endif %}
             - name: WORDPRESS_DB_NAME
               value: "{{ svc_wordpress_db_name }}"
             - name: WORDPRESS_DB_USER
