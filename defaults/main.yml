@@ -1,0 +1,98 @@
+---
+# Default variables for the WordPress service role
+
+# Name used for the rendered LXC application definition and container.
+svc_wordpress_name: wordpress
+
+# Location where the rendered LXC definition should be written. The caller must
+# override this with a writable path that is collected by the control plane.
+svc_wordpress_lxc_config_path: ""
+
+# OCI image details.
+svc_wordpress_image: docker.io/library/wordpress:6.4.3-php8.2-apache
+svc_wordpress_image_pull_policy: if-not-present
+
+# Desired number of replicas/instances for the workload. Keep this at 1 unless
+# your object storage backend supports concurrent writers.
+svc_wordpress_replicas: 1
+
+# Ingress configuration. The hostname is required and must be routable through
+# the platform's ingress controller. TLS secrets are optional.
+svc_wordpress_ingress_hostname: ""
+svc_wordpress_ingress_class_name: ""
+svc_wordpress_ingress_tls_secret: ""
+svc_wordpress_ingress_annotations: {}
+
+# Public URL that WordPress should advertise. By default it is derived from the
+# ingress hostname using HTTPS.
+svc_wordpress_scheme: https
+svc_wordpress_url: "{{ svc_wordpress_scheme }}://{{ svc_wordpress_ingress_hostname }}"
+
+# Database connectivity. The role depends on svc-mariadb (or another compatible
+# service) to provide the actual database instance.
+svc_wordpress_db_host: svc-mariadb
+svc_wordpress_db_port: 3306
+svc_wordpress_db_name: wordpress
+svc_wordpress_db_user: wordpress
+svc_wordpress_db_password: ""
+svc_wordpress_db_use_tls: true
+
+# Redis caching configuration. The role depends on svc-redis.
+svc_wordpress_redis_host: svc-redis
+svc_wordpress_redis_port: 6379
+svc_wordpress_redis_password: ""
+svc_wordpress_redis_use_tls: true
+svc_wordpress_enable_object_cache: true
+
+# WordPress tuning knobs.
+svc_wordpress_memory_limit: 256M
+svc_wordpress_max_upload_size: 64M
+svc_wordpress_wp_cli_auto_updates: false
+svc_wordpress_extra_environment: {}
+svc_wordpress_extra_wordpress_config: ""
+svc_wordpress_env_secret_name: ""
+
+# Persistent storage for uploads. The root filesystem is configured read-only so
+# the uploads volume must be writable.
+svc_wordpress_uploads_storage_class: ""
+svc_wordpress_uploads_size: 10Gi
+svc_wordpress_uploads_path: /var/www/html/wp-content/uploads
+
+# Service metadata.
+svc_wordpress_service_annotations: {}
+
+# Security hardening options.
+svc_wordpress_user: 33   # www-data
+svc_wordpress_group: 33  # www-data
+svc_wordpress_read_only_rootfs: true
+svc_wordpress_drop_capabilities:
+  - ALL
+svc_wordpress_allow_privileged: false
+svc_wordpress_tmpfs_paths:
+  - /tmp
+  - /run
+
+# Health probe configuration.
+svc_wordpress_readiness_path: /wp-login.php
+svc_wordpress_readiness_port: 80
+svc_wordpress_readiness_initial_delay: 30
+svc_wordpress_readiness_interval: 30
+svc_wordpress_readiness_timeout: 5
+svc_wordpress_readiness_failure_threshold: 5
+svc_wordpress_readiness_success_threshold: 1
+
+svc_wordpress_liveness_command:
+  - /bin/sh
+  - -c
+  - php -m >/dev/null
+svc_wordpress_liveness_initial_delay: 60
+svc_wordpress_liveness_interval: 60
+svc_wordpress_liveness_timeout: 5
+svc_wordpress_liveness_failure_threshold: 3
+
+# Optional object storage integration. When enabled, provide credentials via
+# secrets and set the corresponding WordPress configuration snippet.
+svc_wordpress_enable_object_storage: false
+svc_wordpress_object_storage_plugin: wp-s3
+svc_wordpress_object_storage_bucket: ""
+svc_wordpress_object_storage_region: ""
