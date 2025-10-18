@@ -1,0 +1,219 @@
+---
+apiVersion: lxc.shm.dev/v1alpha1
+kind: Application
+metadata:
+  name: {{ svc_wordpress_name }}
+spec:
+  replicas: {{ svc_wordpress_replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ svc_wordpress_name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ svc_wordpress_name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ svc_wordpress_user }}
+        runAsGroup: {{ svc_wordpress_group }}
+        fsGroup: {{ svc_wordpress_group }}
+      containers:
+        - name: {{ svc_wordpress_name }}
+          image: {{ svc_wordpress_image }}
+          imagePullPolicy: {{ svc_wordpress_image_pull_policy }}
+          securityContext:
+            readOnlyRootFilesystem: {{ svc_wordpress_read_only_rootfs | bool | lower }}
+            allowPrivilegeEscalation: false
+            privileged: {{ svc_wordpress_allow_privileged | bool | lower }}
+            capabilities:
+              drop: {{ svc_wordpress_drop_capabilities }}
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: "{{ svc_wordpress_db_host }}:{{ svc_wordpress_db_port }}"
+            - name: WORDPRESS_DB_NAME
+              value: "{{ svc_wordpress_db_name }}"
+            - name: WORDPRESS_DB_USER
+              value: "{{ svc_wordpress_db_user }}"
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-db
+                  key: password
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_HOME', '{{ svc_wordpress_url }}');
+                define('WP_SITEURL', '{{ svc_wordpress_url }}');
+                define('FORCE_SSL_ADMIN', true);
+                {% if not svc_wordpress_wp_cli_auto_updates %}
+                define('AUTOMATIC_UPDATER_DISABLED', true);
+                define('WP_AUTO_UPDATE_CORE', false);
+                {% endif %}
+                {% if svc_wordpress_enable_object_cache %}
+                define('WP_CACHE', true);
+                {% endif %}
+                {% if svc_wordpress_enable_object_storage %}
+                define('S3_UPLOADS_BUCKET', getenv('S3_UPLOADS_BUCKET'));
+                define('S3_UPLOADS_REGION', getenv('S3_UPLOADS_REGION'));
+                {% endif %}
+                {{ svc_wordpress_extra_wordpress_config }}
+            - name: WORDPRESS_DB_SSL
+              value: "{{ '1' if svc_wordpress_db_use_tls else '0' }}"
+            - name: WORDPRESS_MEMORY_LIMIT
+              value: "{{ svc_wordpress_memory_limit }}"
+            - name: PHP_MEMORY_LIMIT
+              value: "{{ svc_wordpress_memory_limit }}"
+            - name: WORDPRESS_MAX_UPLOAD_SIZE
+              value: "{{ svc_wordpress_max_upload_size }}"
+            - name: WORDPRESS_CONFIG_PERMALINK_STRUCTURE
+              value: '/%year%/%monthnum%/%postname%/'
+            - name: WORDPRESS_AUTO_UPDATE_CORE
+              value: "{{ 'true' if svc_wordpress_wp_cli_auto_updates else 'false' }}"
+            - name: WORDPRESS_URL
+              value: "{{ svc_wordpress_url }}"
+            {% if svc_wordpress_enable_object_cache %}
+            - name: WP_REDIS_HOST
+              value: "{{ svc_wordpress_redis_host }}"
+            - name: WP_REDIS_PORT
+              value: "{{ svc_wordpress_redis_port }}"
+            - name: WP_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-redis
+                  key: password
+            - name: WP_REDIS_SCHEME
+              value: "{{ 'tls' if svc_wordpress_redis_use_tls else 'tcp' }}"
+            {% endif %}
+            {% if svc_wordpress_enable_object_storage %}
+            - name: S3_UPLOADS_BUCKET
+              value: "{{ svc_wordpress_object_storage_bucket }}"
+            - name: S3_UPLOADS_REGION
+              value: "{{ svc_wordpress_object_storage_region }}"
+            {% endif %}
+            {% for key, value in svc_wordpress_extra_environment.items() %}
+            - name: {{ key }}
+              value: "{{ value }}"
+            {% endfor %}
+          {% if svc_wordpress_env_secret_name %}
+          envFrom:
+            - secretRef:
+                name: {{ svc_wordpress_env_secret_name }}
+          {% endif %}
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: {{ svc_wordpress_readiness_path }}
+              port: {{ svc_wordpress_readiness_port }}
+              scheme: HTTP
+            initialDelaySeconds: {{ svc_wordpress_readiness_initial_delay }}
+            periodSeconds: {{ svc_wordpress_readiness_interval }}
+            timeoutSeconds: {{ svc_wordpress_readiness_timeout }}
+            failureThreshold: {{ svc_wordpress_readiness_failure_threshold }}
+            successThreshold: {{ svc_wordpress_readiness_success_threshold }}
+          livenessProbe:
+            exec:
+              command: {{ svc_wordpress_liveness_command }}
+            initialDelaySeconds: {{ svc_wordpress_liveness_initial_delay }}
+            periodSeconds: {{ svc_wordpress_liveness_interval }}
+            timeoutSeconds: {{ svc_wordpress_liveness_timeout }}
+            failureThreshold: {{ svc_wordpress_liveness_failure_threshold }}
+          volumeMounts:
+            - name: uploads
+              mountPath: {{ svc_wordpress_uploads_path }}
+            {% for path in svc_wordpress_tmpfs_paths %}
+            - name: tmpfs-{{ loop.index }}
+              mountPath: {{ path }}
+            {% endfor %}
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: {{ svc_wordpress_name }}-uploads
+        {% for path in svc_wordpress_tmpfs_paths %}
+        - name: tmpfs-{{ loop.index }}
+          emptyDir:
+            medium: Memory
+        {% endfor %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ svc_wordpress_name }}-uploads
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ svc_wordpress_uploads_size }}
+  {% if svc_wordpress_uploads_storage_class %}
+  storageClassName: {{ svc_wordpress_uploads_storage_class }}
+  {% endif %}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ svc_wordpress_name }}
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "{{ svc_wordpress_max_upload_size }}"
+{% for key, value in svc_wordpress_ingress_annotations.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+  {% if svc_wordpress_ingress_class_name %}
+  ingressClassName: {{ svc_wordpress_ingress_class_name }}
+  {% endif %}
+spec:
+  {% if svc_wordpress_ingress_tls_secret %}
+  tls:
+    - hosts:
+        - {{ svc_wordpress_ingress_hostname }}
+      secretName: {{ svc_wordpress_ingress_tls_secret }}
+  {% endif %}
+  rules:
+    - host: {{ svc_wordpress_ingress_hostname }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ svc_wordpress_name }}
+                port:
+                  name: http
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ svc_wordpress_name }}-db
+type: Opaque
+stringData:
+  password: "{{ svc_wordpress_db_password }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ svc_wordpress_name }}-redis
+type: Opaque
+stringData:
+  password: "{{ svc_wordpress_redis_password }}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ svc_wordpress_name }}
+{% if svc_wordpress_service_annotations %}
+  annotations:
+{% for key, value in svc_wordpress_service_annotations.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ svc_wordpress_name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP
