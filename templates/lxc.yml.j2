@@ -29,17 +29,16 @@ spec:
             capabilities:
               drop: {{ svc_wordpress_drop_capabilities }}
           env:
-            {% set _custom_db_host = svc_wordpress_db_host | default('', true) %}
-            {% set _custom_db_port = svc_wordpress_db_port | default('', true) %}
-            {% set _exported_db_host = DATABASE_HOST | default('', true) %}
-            {% set _exported_db_port = DATABASE_PORT | default('', true) %}
-            {% if _custom_db_host %}
-            - name: WORDPRESS_DB_HOST
-              value: "{{ _custom_db_host }}{% if _custom_db_port %}:{{ _custom_db_port }}{% endif %}"
-            {% else %}
-            - name: WORDPRESS_DB_HOST
-              value: "{{ _exported_db_host }}{% if _exported_db_port %}:{{ _exported_db_port }}{% endif %}"
+            {% set _resolved_db_host = svc_wordpress_db_host | default('', true) %}
+            {% if not _resolved_db_host and (DATABASE_HOST is defined) %}
+            {% set _resolved_db_host = DATABASE_HOST | default('', true) %}
             {% endif %}
+            {% set _resolved_db_port = svc_wordpress_db_port | default('', true) %}
+            {% if not (_resolved_db_port | string | length) and (DATABASE_PORT is defined) %}
+            {% set _resolved_db_port = DATABASE_PORT | default('', true) %}
+            {% endif %}
+            - name: WORDPRESS_DB_HOST
+              value: "{{ _resolved_db_host }}{% if _resolved_db_port %}:{{ _resolved_db_port }}{% endif %}"
             - name: WORDPRESS_DB_NAME
               value: "{{ svc_wordpress_db_name }}"
             - name: WORDPRESS_DB_USER
@@ -51,27 +50,64 @@ spec:
                   key: password
             - name: WORDPRESS_CONFIG_EXTRA
               value: |
+                if (file_exists('{{ svc_wordpress_salts_mount_path }}/wp-salts.php')) {
+                  require_once '{{ svc_wordpress_salts_mount_path }}/wp-salts.php';
+                }
                 define('WP_HOME', '{{ svc_wordpress_url }}');
                 define('WP_SITEURL', '{{ svc_wordpress_url }}');
                 define('FORCE_SSL_ADMIN', true);
+                if (!defined('DISALLOW_FILE_EDIT')) {
+                  define('DISALLOW_FILE_EDIT', true);
+                }
+                $httpsDetected = false;
+                if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+                  $forwardedProto = explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'])[0];
+                  if (stripos($forwardedProto, 'https') !== false) {
+                    $_SERVER['HTTPS'] = 'on';
+                    $_SERVER['SERVER_PORT'] = 443;
+                    $httpsDetected = true;
+                  }
+                }
+                if (isset($_SERVER['HTTP_X_FORWARDED_HOST'])) {
+                  $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_X_FORWARDED_HOST'];
+                }
+                if (!$httpsDetected && (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')) {
+                  $_SERVER['SERVER_PORT'] = 443;
+                }
+                if (isset($_SERVER['SCRIPT_NAME']) && basename($_SERVER['SCRIPT_NAME']) === 'xmlrpc.php') {
+                  header('HTTP/1.1 403 Forbidden');
+                  exit;
+                }
                 {% if not svc_wordpress_wp_cli_auto_updates %}
                 define('AUTOMATIC_UPDATER_DISABLED', true);
                 define('WP_AUTO_UPDATE_CORE', false);
                 {% endif %}
                 {% if svc_wordpress_enable_object_cache %}
                 define('WP_CACHE', true);
+                define('WP_REDIS_SCHEME', '{{ 'tls' if svc_wordpress_redis_use_tls else 'tcp' }}');
+                {% if svc_wordpress_redis_use_tls %}
+                define('WP_REDIS_SSL_CONTEXT_OPTIONS', [
+                  'verify_peer' => {{ 'true' if svc_wordpress_redis_verify_peer else 'false' }},
+                  {% if svc_wordpress_redis_verify_peer %}
+                  'cafile' => '{{ svc_wordpress_redis_tls_ca_mount_path }}',
+                  {% endif %}
+                ]);
                 {% endif %}
-                define('AUTH_KEY', getenv('WORDPRESS_AUTH_KEY'));
-                define('SECURE_AUTH_KEY', getenv('WORDPRESS_SECURE_AUTH_KEY'));
-                define('LOGGED_IN_KEY', getenv('WORDPRESS_LOGGED_IN_KEY'));
-                define('NONCE_KEY', getenv('WORDPRESS_NONCE_KEY'));
-                define('AUTH_SALT', getenv('WORDPRESS_AUTH_SALT'));
-                define('SECURE_AUTH_SALT', getenv('WORDPRESS_SECURE_AUTH_SALT'));
-                define('LOGGED_IN_SALT', getenv('WORDPRESS_LOGGED_IN_SALT'));
-                define('NONCE_SALT', getenv('WORDPRESS_NONCE_SALT'));
+                {% endif %}
                 {% if svc_wordpress_enable_object_storage %}
                 define('S3_UPLOADS_BUCKET', getenv('S3_UPLOADS_BUCKET'));
                 define('S3_UPLOADS_REGION', getenv('S3_UPLOADS_REGION'));
+                define('S3_UPLOADS_KEY', trim(file_get_contents('{{ svc_wordpress_object_storage_credentials_mount_path }}/access_key')));
+                define('S3_UPLOADS_SECRET', trim(file_get_contents('{{ svc_wordpress_object_storage_credentials_mount_path }}/secret_key')));
+                {% endif %}
+                {% if svc_wordpress_enable_multisite %}
+                define('WP_ALLOW_MULTISITE', true);
+                define('MULTISITE', true);
+                define('SUBDOMAIN_INSTALL', {{ 'true' if svc_wordpress_multisite.subdomain_install else 'false' }});
+                define('DOMAIN_CURRENT_SITE', '{{ svc_wordpress_multisite.site_domain }}');
+                define('PATH_CURRENT_SITE', '{{ svc_wordpress_multisite.site_path }}');
+                define('SITE_ID_CURRENT_SITE', {{ svc_wordpress_multisite.site_id }});
+                define('BLOG_ID_CURRENT_SITE', {{ svc_wordpress_multisite.blog_id }});
                 {% endif %}
                 {{ svc_wordpress_extra_wordpress_config }}
             - name: WORDPRESS_DB_SSL
@@ -88,46 +124,6 @@ spec:
               value: "{{ 'true' if svc_wordpress_wp_cli_auto_updates else 'false' }}"
             - name: WORDPRESS_URL
               value: "{{ svc_wordpress_url }}"
-            - name: WORDPRESS_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: AUTH_KEY
-            - name: WORDPRESS_SECURE_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: SECURE_AUTH_KEY
-            - name: WORDPRESS_LOGGED_IN_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: LOGGED_IN_KEY
-            - name: WORDPRESS_NONCE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: NONCE_KEY
-            - name: WORDPRESS_AUTH_SALT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: AUTH_SALT
-            - name: WORDPRESS_SECURE_AUTH_SALT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: SECURE_AUTH_SALT
-            - name: WORDPRESS_LOGGED_IN_SALT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: LOGGED_IN_SALT
-            - name: WORDPRESS_NONCE_SALT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-auth
-                  key: NONCE_SALT
             {% if svc_wordpress_enable_object_cache %}
             - name: WP_REDIS_HOST
               value: "{{ svc_wordpress_redis_host }}"
@@ -146,16 +142,6 @@ spec:
               value: "{{ svc_wordpress_object_storage_bucket }}"
             - name: S3_UPLOADS_REGION
               value: "{{ svc_wordpress_object_storage_region }}"
-            - name: S3_UPLOADS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-object-storage
-                  key: access_key
-            - name: S3_UPLOADS_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ svc_wordpress_name }}-object-storage
-                  key: secret_key
             {% endif %}
             {% for key, value in svc_wordpress_extra_environment.items() %}
             - name: {{ key }}
@@ -170,10 +156,12 @@ spec:
             - name: http
               containerPort: 80
           readinessProbe:
-            httpGet:
-              path: {{ svc_wordpress_readiness_path }}
-              port: {{ svc_wordpress_readiness_port }}
-              scheme: HTTP
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  curl --fail --silent --show-error http://127.0.0.1:{{ svc_wordpress_readiness_port }}{{ svc_wordpress_readiness_path }}
             initialDelaySeconds: {{ svc_wordpress_readiness_initial_delay }}
             periodSeconds: {{ svc_wordpress_readiness_interval }}
             timeoutSeconds: {{ svc_wordpress_readiness_timeout }}
@@ -181,18 +169,49 @@ spec:
             successThreshold: {{ svc_wordpress_readiness_success_threshold }}
           livenessProbe:
             exec:
-              command: {{ svc_wordpress_liveness_command }}
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  curl --fail --silent --show-error http://127.0.0.1:{{ svc_wordpress_readiness_port }}{{ svc_wordpress_liveness_path }}
             initialDelaySeconds: {{ svc_wordpress_liveness_initial_delay }}
             periodSeconds: {{ svc_wordpress_liveness_interval }}
             timeoutSeconds: {{ svc_wordpress_liveness_timeout }}
             failureThreshold: {{ svc_wordpress_liveness_failure_threshold }}
+          startupProbe:
+            httpGet:
+              path: {{ svc_wordpress_startup_path }}
+              port: {{ svc_wordpress_readiness_port }}
+              scheme: HTTP
+            initialDelaySeconds: {{ svc_wordpress_startup_initial_delay }}
+            periodSeconds: {{ svc_wordpress_startup_interval }}
+            timeoutSeconds: {{ svc_wordpress_startup_timeout }}
+            failureThreshold: {{ svc_wordpress_startup_failure_threshold }}
           volumeMounts:
             - name: uploads
               mountPath: {{ svc_wordpress_uploads_path }}
+            - name: wordpress-salts
+              mountPath: {{ svc_wordpress_salts_mount_path }}
+              readOnly: true
             {% if svc_wordpress_extra_php_ini %}
             - name: php-extra-config
               mountPath: /usr/local/etc/php/conf.d/zz-custom.ini
               subPath: custom.ini
+            {% endif %}
+            {% if svc_wordpress_enable_object_storage %}
+            - name: object-storage-credentials
+              mountPath: {{ svc_wordpress_object_storage_credentials_mount_path }}
+              readOnly: true
+            {% endif %}
+            {% if svc_wordpress_enable_object_cache and svc_wordpress_redis_use_tls and svc_wordpress_redis_tls_secret %}
+            - name: redis-ca
+              mountPath: {{ svc_wordpress_redis_tls_ca_mount_dir }}
+              readOnly: true
+            {% endif %}
+            {% if svc_wordpress_mu_plugins %}
+            - name: mu-plugins
+              mountPath: /var/www/html/wp-content/mu-plugins
+              readOnly: true
             {% endif %}
             {% for path in svc_wordpress_tmpfs_paths %}
             - name: tmpfs-{{ loop.index }}
@@ -206,6 +225,24 @@ spec:
         - name: php-extra-config
           configMap:
             name: {{ svc_wordpress_name }}-php-config
+        {% endif %}
+        - name: wordpress-salts
+          secret:
+            secretName: {{ svc_wordpress_name }}-auth
+        {% if svc_wordpress_enable_object_storage %}
+        - name: object-storage-credentials
+          secret:
+            secretName: {{ svc_wordpress_name }}-object-storage
+        {% endif %}
+        {% if svc_wordpress_enable_object_cache and svc_wordpress_redis_use_tls and svc_wordpress_redis_tls_secret %}
+        - name: redis-ca
+          secret:
+            secretName: {{ svc_wordpress_redis_tls_secret }}
+        {% endif %}
+        {% if svc_wordpress_mu_plugins %}
+        - name: mu-plugins
+          configMap:
+            name: {{ svc_wordpress_name }}-mu-plugins
         {% endif %}
         {% for path in svc_wordpress_tmpfs_paths %}
         - name: tmpfs-{{ loop.index }}
@@ -301,6 +338,16 @@ stringData:
   SECURE_AUTH_SALT: "{{ svc_wordpress_auth_keys.SECURE_AUTH_SALT }}"
   LOGGED_IN_SALT: "{{ svc_wordpress_auth_keys.LOGGED_IN_SALT }}"
   NONCE_SALT: "{{ svc_wordpress_auth_keys.NONCE_SALT }}"
+  wp-salts.php: |-
+    <?php
+    define('AUTH_KEY', '{{ svc_wordpress_auth_keys.AUTH_KEY }}');
+    define('SECURE_AUTH_KEY', '{{ svc_wordpress_auth_keys.SECURE_AUTH_KEY }}');
+    define('LOGGED_IN_KEY', '{{ svc_wordpress_auth_keys.LOGGED_IN_KEY }}');
+    define('NONCE_KEY', '{{ svc_wordpress_auth_keys.NONCE_KEY }}');
+    define('AUTH_SALT', '{{ svc_wordpress_auth_keys.AUTH_SALT }}');
+    define('SECURE_AUTH_SALT', '{{ svc_wordpress_auth_keys.SECURE_AUTH_SALT }}');
+    define('LOGGED_IN_SALT', '{{ svc_wordpress_auth_keys.LOGGED_IN_SALT }}');
+    define('NONCE_SALT', '{{ svc_wordpress_auth_keys.NONCE_SALT }}');
 {% if svc_wordpress_extra_php_ini %}
 ---
 apiVersion: v1
@@ -311,6 +358,24 @@ data:
   custom.ini: |-
 {% for line in svc_wordpress_extra_php_ini.splitlines() %}
     {{ line }}
+{% endfor %}
+{% endif %}
+{% if svc_wordpress_mu_plugins %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ svc_wordpress_name }}-mu-plugins
+data:
+{% for filename, content in svc_wordpress_mu_plugins.items() %}
+  {{ filename }}: |-
+{% if content.splitlines() %}
+{% for line in content.splitlines() %}
+    {{ line }}
+{% endfor %}
+{% else %}
+
+{% endif %}
 {% endfor %}
 {% endif %}
 ---
@@ -332,3 +397,26 @@ spec:
       port: 80
       targetPort: 80
   type: ClusterIP
+{% if svc_wordpress_enable_cron_job %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ svc_wordpress_name }}-cron
+spec:
+  schedule: "{{ svc_wordpress_cron_schedule }}"
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ svc_wordpress_cron_timeout_seconds }}
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger-wp-cron
+              image: {{ svc_wordpress_cron_image }}
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  curl --fail --silent --show-error --retry 3 --retry-delay 5 "{{ svc_wordpress_url }}/wp-cron.php?doing_wp_cron=1"
+{% endif %}
