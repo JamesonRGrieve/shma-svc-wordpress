@@ -30,7 +30,10 @@ svc_wordpress_scheme: https
 svc_wordpress_url: "{{ svc_wordpress_scheme }}://{{ svc_wordpress_ingress_hostname }}"
 
 # Database connectivity. The role depends on svc-mariadb (or another compatible
-# service) to provide the actual database instance.
+# service) to provide the actual database instance. When paired with the
+# svc-mariadb role, consume the exported hostname (for example,
+# ``svc_wordpress_db_host: "{{ lookup('env', 'MARIADB_HOST') }}"``) or wire the
+# value from the MariaDB service outputs.
 svc_wordpress_db_host: ""
 svc_wordpress_db_port: 3306
 svc_wordpress_db_name: wordpress
