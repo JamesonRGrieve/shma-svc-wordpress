@@ -50,8 +50,25 @@
     that:
       - svc_wordpress_redis_password is string
       - svc_wordpress_redis_password | length > 0
-    fail_msg: >-
+  fail_msg: >-
       The Redis cache password must be supplied via an Ansible vault or secret.
+
+- name: Ensure WordPress authentication keys are provided
+  ansible.builtin.assert:
+    that:
+      - svc_wordpress_auth_keys is mapping
+      - svc_wordpress_auth_keys | length == 8
+      - svc_wordpress_auth_keys.AUTH_KEY | length > 0
+      - svc_wordpress_auth_keys.SECURE_AUTH_KEY | length > 0
+      - svc_wordpress_auth_keys.LOGGED_IN_KEY | length > 0
+      - svc_wordpress_auth_keys.NONCE_KEY | length > 0
+      - svc_wordpress_auth_keys.AUTH_SALT | length > 0
+      - svc_wordpress_auth_keys.SECURE_AUTH_SALT | length > 0
+      - svc_wordpress_auth_keys.LOGGED_IN_SALT | length > 0
+      - svc_wordpress_auth_keys.NONCE_SALT | length > 0
+  fail_msg: >-
+      All WordPress authentication keys and salts must be provided via an
+      encrypted variable or secret export.
 
 - name: Render the LXC workload definition
   ansible.builtin.template:

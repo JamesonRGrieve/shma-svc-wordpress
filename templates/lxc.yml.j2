@@ -61,6 +61,14 @@ spec:
                 {% if svc_wordpress_enable_object_cache %}
                 define('WP_CACHE', true);
                 {% endif %}
+                define('AUTH_KEY', getenv('WORDPRESS_AUTH_KEY'));
+                define('SECURE_AUTH_KEY', getenv('WORDPRESS_SECURE_AUTH_KEY'));
+                define('LOGGED_IN_KEY', getenv('WORDPRESS_LOGGED_IN_KEY'));
+                define('NONCE_KEY', getenv('WORDPRESS_NONCE_KEY'));
+                define('AUTH_SALT', getenv('WORDPRESS_AUTH_SALT'));
+                define('SECURE_AUTH_SALT', getenv('WORDPRESS_SECURE_AUTH_SALT'));
+                define('LOGGED_IN_SALT', getenv('WORDPRESS_LOGGED_IN_SALT'));
+                define('NONCE_SALT', getenv('WORDPRESS_NONCE_SALT'));
                 {% if svc_wordpress_enable_object_storage %}
                 define('S3_UPLOADS_BUCKET', getenv('S3_UPLOADS_BUCKET'));
                 define('S3_UPLOADS_REGION', getenv('S3_UPLOADS_REGION'));
@@ -80,6 +88,46 @@ spec:
               value: "{{ 'true' if svc_wordpress_wp_cli_auto_updates else 'false' }}"
             - name: WORDPRESS_URL
               value: "{{ svc_wordpress_url }}"
+            - name: WORDPRESS_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: AUTH_KEY
+            - name: WORDPRESS_SECURE_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: SECURE_AUTH_KEY
+            - name: WORDPRESS_LOGGED_IN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: LOGGED_IN_KEY
+            - name: WORDPRESS_NONCE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: NONCE_KEY
+            - name: WORDPRESS_AUTH_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: AUTH_SALT
+            - name: WORDPRESS_SECURE_AUTH_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: SECURE_AUTH_SALT
+            - name: WORDPRESS_LOGGED_IN_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: LOGGED_IN_SALT
+            - name: WORDPRESS_NONCE_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ svc_wordpress_name }}-auth
+                  key: NONCE_SALT
             {% if svc_wordpress_enable_object_cache %}
             - name: WP_REDIS_HOST
               value: "{{ svc_wordpress_redis_host }}"
@@ -131,6 +179,11 @@ spec:
           volumeMounts:
             - name: uploads
               mountPath: {{ svc_wordpress_uploads_path }}
+            {% if svc_wordpress_extra_php_ini %}
+            - name: php-extra-config
+              mountPath: /usr/local/etc/php/conf.d/zz-custom.ini
+              subPath: custom.ini
+            {% endif %}
             {% for path in svc_wordpress_tmpfs_paths %}
             - name: tmpfs-{{ loop.index }}
               mountPath: {{ path }}
@@ -139,6 +192,11 @@ spec:
         - name: uploads
           persistentVolumeClaim:
             claimName: {{ svc_wordpress_name }}-uploads
+        {% if svc_wordpress_extra_php_ini %}
+        - name: php-extra-config
+          configMap:
+            name: {{ svc_wordpress_name }}-php-config
+        {% endif %}
         {% for path in svc_wordpress_tmpfs_paths %}
         - name: tmpfs-{{ loop.index }}
           emptyDir:
@@ -207,6 +265,33 @@ metadata:
 type: Opaque
 stringData:
   password: "{{ svc_wordpress_redis_password }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ svc_wordpress_name }}-auth
+type: Opaque
+stringData:
+  AUTH_KEY: "{{ svc_wordpress_auth_keys.AUTH_KEY }}"
+  SECURE_AUTH_KEY: "{{ svc_wordpress_auth_keys.SECURE_AUTH_KEY }}"
+  LOGGED_IN_KEY: "{{ svc_wordpress_auth_keys.LOGGED_IN_KEY }}"
+  NONCE_KEY: "{{ svc_wordpress_auth_keys.NONCE_KEY }}"
+  AUTH_SALT: "{{ svc_wordpress_auth_keys.AUTH_SALT }}"
+  SECURE_AUTH_SALT: "{{ svc_wordpress_auth_keys.SECURE_AUTH_SALT }}"
+  LOGGED_IN_SALT: "{{ svc_wordpress_auth_keys.LOGGED_IN_SALT }}"
+  NONCE_SALT: "{{ svc_wordpress_auth_keys.NONCE_SALT }}"
+{% if svc_wordpress_extra_php_ini %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ svc_wordpress_name }}-php-config
+data:
+  custom.ini: |-
+{% for line in svc_wordpress_extra_php_ini.splitlines() %}
+    {{ line }}
+{% endfor %}
+{% endif %}
 ---
 apiVersion: v1
 kind: Service
